@@ -1,0 +1,772 @@
+---
+title: "Techniques de visualisation des données - UE2"
+author: "Francisco Martin-Gomez"
+date: "juillet-août 2023"
+output:
+  html_document:
+    df_print: paged
+  theme: blue_theme
+  highlight: monochrome
+  toc: TRUE  # faire apparaître une TOC
+  toc_float:   
+      collapsed: false
+      smooth_scroll: false
+  toc_depth : 4 # profondeur de la table TOC
+  code_folding : hide  # cache par défaut les scripts R
+  number_sections : true # attribue un numéro aux chapitres et sections
+---
+
+
+```{r loading_packages, message = FALSE}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(naniar)
+library(tidyr)
+library(skimr)
+library(stringr)
+library(plotly)
+library(xtable)
+```
+
+```{r theme personnalise}
+blue_theme <- function() {
+  theme(
+    # add border
+    panel.border = element_rect(colour = "blue", fill = NA, linetype = 2),
+    # color background
+    panel.background = element_rect(fill = "aliceblue"),
+    # modify grid
+    panel.grid.major.x = element_line(colour = "steelblue", linetype = 3, linewidth = 0.5),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y =  element_line(colour = "steelblue", linetype = 3, linewidth = 0.5),
+    panel.grid.minor.y = element_blank(),
+    # modify text, axis and colour
+    axis.text = element_text(colour = "steelblue", face = "italic"),
+    axis.title = element_text(colour = "steelblue"),
+    axis.ticks = element_line(colour = "steelblue"),
+    # text elements
+    plot.title = element_text(size = 16, face = 'bold', hjust = 0, vjust = 2, color="steelblue"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 9, hjust = 1),
+    # legend at the bottom
+    legend.position = "bottom"
+  )
+}
+
+```
+
+
+```{r Loading Datasets}
+# Chargement du jeu de données PhD_v3 
+PhD_v3 <- read.csv("PhD_v3.csv", header=TRUE, fileEncoding="UTF-8")
+
+```
+
+```{r Exploration initiale}
+glimpse(PhD_v3)
+skim(PhD_v3)
+```
+
+
+```{r Preprocessing_wrangling}
+# Correction nom de variable (erreur de conversion lors du chargement du fichier .csv)
+PhD_v3b <- PhD_v3 %>%
+  rename("Discipline_predi" = "Discipline_prÃ.di")
+
+# Correction des erreurs de conversion des accents dans le reste du df
+PhD_v3b <- PhD_v3b %>%
+  mutate(Discipline_predi= str_replace_all(Discipline_predi, "Ã©", "e"))
+
+# Suppression de la première colonne inutile
+PhD_v3b <- PhD_v3b[, -1]
+
+# Vérification
+glimpse(PhD_v3b)
+levels(as.factor(PhD_v3b$Discipline_predi))
+
+# calcul du nombre de doublon dans le df (ligne/observations 100% identiques)
+sum(duplicated(PhD_v3b))
+
+# Affichage des lignes/observations concernées
+duplicated_rows <- PhD_v3b[duplicated(PhD_v3b), ]
+head(duplicated_rows)
+
+# Retrait des doublons
+PhD_v3b <- PhD_v3b %>%
+  distinct()
+
+# Verification
+duplicated_rows <- PhD_v3b[duplicated(PhD_v3b), ]
+head(duplicated_rows)
+
+# Correction des types de variable : modification en date
+PhD_v3b$Date.de.premiere.inscription.en.doctorat <- as.Date(PhD_v3b$Date.de.premiere.inscription.en.doctorat, format="%Y-%m-%d")
+PhD_v3b$Date.de.soutenance <- as.Date(PhD_v3b$Date.de.soutenance, format="%Y-%m-%d")
+
+# Correction des types de variable : modification en variable de type catégoriel
+PhD_v3b <- PhD_v3b %>%
+  mutate_at(vars(Discipline, Discipline_predi, Langue_rec, Genre), as.factor)
+
+
+## Complétion du dataset : tranformation des valeurs vides ou empty ("") des variables de type "char" par NA
+PhD_v3b <- PhD_v3b %>% 
+  mutate_if(is.character, ~ str_trim(.)) %>%  # Supprime les espaces avant et après la chaîne
+  mutate_if(is.character, ~ na_if(., ""))     # Remplace les chaînes vides par NA
+
+## Correction des problèmes de typographie sur les NA (certaines étant inscrites en minuscule "na")
+PhD_v3b <- PhD_v3b %>% mutate_if(is.character, ~na_if(., "na"))
+
+# Remplacer le point par un espace dans les noms des colonnes
+names(PhD_v3b) <- gsub("\\.", " ", names(PhD_v3b))
+
+# Renomer certaines colonnes pour une meilleure lisibilité des graphiques
+PhD_v3b <- PhD_v3b %>%
+  rename(
+    "Publication dans theses.fr" = "Publication dans theses fr",
+    "Mise a jour dans theses.fr" = "Mise a jour dans theses fr",
+    "Directeur de these (nom_prenom)" = "Directeur de these  nom prenom "
+  )
+
+
+# Vérification des opérations
+glimpse(PhD_v3b)
+
+# décharge de la mémoire
+rm(PhD_v3)
+rm(duplicated_rows)
+
+# Export de la base de données propre
+write.csv(PhD_v3b, "PhD_v3_clean.csv")
+
+```
+
+
+
+```{r fonction latex, echo=FALSE}
+# Fonction de tabulation de certaines données
+variable_details <- function(data) {
+  df <- data.frame(
+    Variable = names(data),
+    Nbr_NA = sapply(data, function(x) sum(is.na(x))),
+    Type = sapply(data, class)
+  )
+  
+  df$Nbr_Levels <- sapply(data, function(x) ifelse(is.factor(x), length(levels(x)), NA))
+  
+  return(df)
+}
+
+tableau <- variable_details(PhD_v3b)
+print(tableau)
+
+# Création du code latex
+latex_code <- xtable(tableau)
+print(latex_code, type = "latex", include.rownames = FALSE)
+
+# décharge de la mémoire
+rm(latex_code, tableau, variable_details)
+
+```
+
+
+# Exercice 1
+```{r evoluiton des discipline entre 1985 et 2018, fig.height=10, fig.width=12}
+# création du df de travail pour l'exercice
+df_disc <- PhD_v3b %>%
+  filter(Year >= "1985" & Year <= "2018")
+
+# Area plot basic
+# Compte le nombre de thèses dans chaque Discipline_predi pour chaque année
+df_disc.an <- df_disc %>% 
+  group_by(Year, Discipline_predi) %>% 
+  count()
+colnames(df_disc.an) <- c ("Year", "Discipline_predi", "Disc_predi.an")
+
+# compte le nombre total de thèses par années
+df_an <- df_disc %>%
+  group_by(Year) %>%
+  count()
+colnames(df_an) <- c ("Year", "Disc_tot.an")
+
+# Construction de la df intermediaire pour le calcul des proportions
+df_disc.an2 <- full_join(df_disc.an, df_an, by = "Year") 
+
+# Calcul des proportions annuelle par Discipline_predi
+df_disc.an2 <- df_disc.an2 %>%
+  mutate(df_disc.an2.sum.perc = round((Disc_predi.an / Disc_tot.an)*100, 2))
+
+# Créer le graphique basic
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_area(position = "stack") +
+  labs(x = "Date", y = "Nombre de thèses", fill = "Discipline",
+       title = "Evolution du nombre de thèses par disciplines",
+       subtitle = "Période 1985-2018") +
+  theme(plot.margin = margin(0.75, 1, 0, 0, "cm")) +
+  blue_theme() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# création du stacked barplot
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines", 
+       title = "Evolution du nombre de thèses par disciplines",
+       subtitle = "Période 1985-2018") + 
+  theme(plot.margin = margin(0.75, 1, 0, 0, "cm")) +
+  labs(fill="Disciplines") + 
+  blue_theme()
+
+```
+
+
+## Exercice 1 : area chart avec ordre des disciplines modifiés
+```{r modification ordre disciplines, fig.height=10, fig.width=12, warning = FALSE, message = FALSE}
+# Catégories
+categories <- c("Biologie", "Droit et Science Politique", "Economie Gestion", "Informatique",
+                "Langues et Litteratures", "Materiaux, Milieux et Chimie", "Mathematiques",
+                "Mathematiques et Informatique", "Medecine", "Poubelle", "Psychologie",
+                "Science de l'ingenieur", "Science de la Terre", "Sciences de l'education", "SHS")
+
+# Organiser les catégories
+new_order <- c("Medecine", "Biologie", setdiff(categories, c("Medecine", "Biologie")))
+
+# 
+df_disc.an2$Discipline_predi <- factor(df_disc.an2$Discipline_predi, levels = new_order)
+df_disc.an2$Discipline_predi[df_disc.an2$Discipline_predi == "Poubelle"] <- NA
+
+df_disc.an2 <- df_disc.an2 %>%
+  drop_na(Discipline_predi)
+
+
+# Créer le graphique basic
+p <- ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_area(position = "stack", linewidth = 0.8, na.rm = TRUE) +
+  labs(x = "Date", y = "Nombre de thèses", fill = "Discipline",
+       title = "Evolution du nombre de thèses par disciplines",
+       subtitle = "Période 1985-2018") +
+  theme(plot.margin = margin(0.75, 1, 0, 0, "cm")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  blue_theme()
+p
+
+# Sauvegarder le graphique au format PNG
+ggsave(filename = "area_chart.png", plot = p)
+```
+
+## Exercice 1bis : supplément personnel pour rapport (tableau + code latex)
+```{r}
+# Filtrer le dataframe pour les années 1985 et 2018
+filtered_df <- df_disc.an2[df_disc.an2$Year %in% c(1985, 2002, 2018), ]
+
+# Afficher le dataframe filtré
+print(filtered_df)
+
+# Pour l'année 1985
+top5_1985 <- filtered_df %>%
+  filter(Year == 1985) %>%
+  arrange(desc(df_disc.an2.sum.perc)) %>%
+  head(5)
+
+# Pour l'année 2002
+top5_2002 <- filtered_df %>%
+  filter(Year == 2002) %>%
+  arrange(desc(df_disc.an2.sum.perc)) %>%
+  head(5)
+
+# Pour l'année 2018
+top5_2018 <- filtered_df %>%
+  filter(Year == 2018) %>%
+  arrange(desc(df_disc.an2.sum.perc)) %>%
+  head(5)
+
+# Afficher les résultats
+print(top5_1985)
+print(top5_2018)
+
+# Regrouper les dataframes par lignes en utilisant rbind
+tableau2 <- rbind(top5_1985, top5_2002)
+tableau2 <- rbind(tableau2, top5_2018)
+
+# Réorganiser les colonnes si nécessaire
+colnames(tableau2) <- c("Year", "Discipline_predi", "Thèses par discipline", "Total thèses soutenues", "% thèses par disc.")
+
+tableau2 <- tableau2[, c(1:3)]
+
+# Afficher le dataframe résultant
+print(tableau2)
+
+```
+
+```{r code latex1, include=FALSE}
+# Création du code latex
+latex_code <- xtable(tableau2)
+print(latex_code, type = "latex", include.rownames = FALSE)
+
+# décharge de la mémoire
+rm(latex_code, filtered_df , tableau2)
+
+```
+
+
+# Exercice 2
+```{r evolution des langues de redaction sans alpha, message=FALSE, warning=FALSE}
+p2 <- ggplot(df_disc , aes(x = Year, fill = Langue_rec)) +
+  geom_histogram(position="fill", color="#e9ecef", binwidth = 1) +
+  labs(x = "Années", y = "Thèses (%)") +  
+  ggtitle("Distribution des langues de rédaction entre 1985 et 2018") +
+  theme(plot.margin = margin(0.75, 1, 0, 0, "cm")) +
+  labs(fill="Langues") + 
+  blue_theme()
+p2
+
+# Sauvegarde du graphique
+ggsave(filename = "hist_fill.png", plot = p2)
+
+```
+
+
+```{r evoluiton des discipline avec alpha 1, message=FALSE, warning=FALSE}
+ggplot(df_disc , aes(x = Year, fill = Langue_rec)) +
+  geom_histogram(position="fill", color="#e9ecef", binwidth = 1, alpha = 0.65) +
+  labs(x = "Années", y = "Disciplines (%)") +  
+  ggtitle("Distribution des langues de rédaction entre 1985 et 2018") +
+  labs(fill="Langues") +
+  theme(plot.margin = margin(0.75, 1, 0, 0, "cm")) +
+  blue_theme()
+
+```
+
+```{r evoluiton des discipline avec alpha 2, message=FALSE, warning=FALSE}
+ggplot(df_disc , aes(x = Year, fill = Langue_rec)) +
+  geom_histogram(position="fill", color="#e9ecef", binwidth = 1, alpha = 0.4) +
+  labs(x = "Années", y = "Disciplines (%)") +  
+  ggtitle("Distribution des langues de rédaction entre 1985 et 2018") +
+  labs(fill="Langues") +
+  theme(plot.margin = margin(0.75, 1, 0, 0, "cm")) +
+  blue_theme()
+
+```
+
+## Exercice 2bis : supplément personnel pour rapport (tableau commentaire + code latex)
+```{r}
+tableau3 <- df_disc %>%
+  filter(Year %in% c(1985, 2002, 2018)) %>%
+  group_by(Year, Langue_rec) %>%
+  count() %>%
+  arrange(n)
+
+# Afficher le dataframe résultant
+print(tableau3)
+  
+```
+
+```{r code latex, include=FALSE}
+# Création du code latex
+latex_code <- xtable(tableau3)
+print(latex_code, type = "latex", include.rownames = FALSE)
+
+# décharge de la mémoire
+rm(latex_code, filtered_df , tableau3)
+
+```
+
+
+
+# Exercice 3
+```{r plot origine x normale, message=FALSE, warning=FALSE}
+ggplot(df_disc , aes(x = Year, fill = Genre)) +
+  geom_histogram(position="dodge", color="#e9ecef", binwidth = 5) +
+  labs(x = "Années", y = "Nb. de thèses") +  
+  ggtitle("Distribution des thèses par genre entre 1985 et 2018") +
+  labs(fill="Genres") + 
+  theme(plot.margin = margin(0.5, 1, 0.5, 0, "cm")) +
+  theme(axis.title.x = element_text(margin = margin(t = 8, r = 0, b = 0 , l = 0))) +
+  blue_theme()
+ 
+```
+
+```{r plot1 labels des abscisses modifies, message=FALSE, warning=FALSE}
+ggplot(df_disc , aes(x = Year, fill = Genre)) +
+  geom_histogram(position="dodge", color="#e9ecef", binwidth = 5) +
+  labs(x = "Années", y = "Nb. de thèses") +  
+  ggtitle("Distribution des thèses par genre entre 1985 et 2018") +
+  labs(fill="Genres") + 
+  theme(axis.title.x = element_text(margin = margin(t = 8, r = 0, b = 0 , l = 0))) +
+  theme(plot.margin = margin(0.5, 1, 0.5, 0, "cm")) + 
+  theme(axis.text.x = element_text(margin = margin(t = 50, r = 0, b = 0 , l = 0))) + 
+  blue_theme()
+
+ 
+```
+
+
+```{r graphique labels pivotes, message=FALSE, warning=FALSE}
+ggplot(df_disc , aes(x = Year, fill = Genre)) +
+  geom_histogram(position="dodge", color="#e9ecef", binwidth = 5) +
+  labs(x = "Années", y = "Nb. de thèses") +  
+  ggtitle("Distribution des thèses par genre entre 1985 et 2018") +
+  labs(fill="Genres") + 
+  theme(plot.margin = margin(0.5, 1, 0.5, 0, "cm")) + 
+  theme(axis.title.x = element_text(margin = margin(t = 8, r = 0, b = 0 , l = 0)),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) + 
+  blue_theme()
+
+
+```
+
+
+# Exercice 4
+```{r graphique avec police et tailles modifiees, fig.width=9, warning=FALSE, message=FALSE}
+# charger les polices
+library(extrafont)
+loadfonts(device = "win")
+
+# même graphique avec des polices différentes
+ggplot(df_disc , aes(x = Year, fill = Genre)) +
+  geom_histogram(position="dodge", color="#e9ecef", binwidth = 5) +
+  labs(x = "Années", y = "Nb. de thèses") +  
+  ggtitle("Distribution des thèses par genre entre 1985 et 2018") +
+  labs(fill="Genres") + 
+  theme(plot.margin = margin(0.5, 1, 0.5, 0, "cm")) + 
+  theme(axis.title.x = element_text(margin = margin(t = 8, r = 0, b = 0 , l = 0)),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        text = element_text(family = "Garamond")) 
+
+
+# même graphique avec des tailles de polices différentes pour l'axe X
+ggplot(df_disc , aes(x = Year, fill = Genre)) +
+  geom_histogram(position="dodge", color="#e9ecef", binwidth = 5) +
+  labs(x = "Années", y = "Nb. de thèses") +  
+  ggtitle("Distribution des thèses par genre entre 1985 et 2018") +
+  labs(fill="Genres") + 
+  theme(plot.margin = margin(0.5, 1, 0.5, 0, "cm")) + 
+  theme(axis.title.x = element_text(margin = margin(t = 8, r = 0, b = 0 , l = 0), size = 20),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 14),
+        text = element_text(family = "Garamond")) 
+
+
+# même graphique avec des tailles de polices différentes pour les deux axes
+ggplot(df_disc , aes(x = Year, fill = Genre)) +
+  geom_histogram(position="dodge", color="#e9ecef", binwidth = 5) +
+  labs(x = "Années", y = "Nb. de thèses") +  
+  ggtitle("Distribution des thèses par genre entre 1985 et 2018") +
+  labs(fill="Genres") + 
+  theme(plot.margin = margin(0.5, 1, 0.5, 0, "cm")) + 
+  theme(axis.title.x = element_text(margin = margin(t = 8, r = 0, b = 0 , l = 0), size = 20),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 14),
+        axis.title.y = element_text(size = 20),
+        axis.text.y = element_text(size = 14),
+        text = element_text(family = "Garamond")) 
+
+
+# même graphique avec des tailles de polices différentes pour les deux axes et le titre
+ggplot(df_disc , aes(x = Year, fill = Genre)) +
+  geom_histogram(position="dodge", color="#e9ecef", binwidth = 5) +
+  labs(x = "Années", y = "Nb. de thèses") +  
+  ggtitle("Distribution des thèses par genre entre 1985 et 2018") +
+  labs(fill="Genres") + 
+  theme(plot.margin = margin(0.5, 1, 0.5, 0, "cm")) + 
+  theme(axis.title.x = element_text(margin = margin(t = 8, r = 0, b = 0 , l = 0), size = 24),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 14),
+        axis.title.y = element_text(size = 20),
+        axis.text.y = element_text(size = 14),
+        plot.title = element_text(size = 28),
+        text = element_text(family = "Garamond")) 
+```
+
+
+```{r graphique avec ecrasement au centre}
+ggplot(df_disc , aes(x = Year, fill = Langue_rec)) +
+  geom_histogram(position="fill", color="#e9ecef", binwidth = 1) +
+  labs(x = "Années", y = "Disciplines (%)") +  
+  ggtitle("Distribution des langues de rédaction") +
+  labs(fill="Langues") +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  blue_theme()
+
+ggplot(df_disc , aes(x = Year, fill = Langue_rec)) +
+  geom_histogram(position="fill", color="#e9ecef", binwidth = 1, alpha = 0.75) +
+  labs(x = "Années", y = "Disciplines (%)") +  
+  ggtitle("Distribution des langues de rédaction") +
+  labs(fill="Langues") +
+  theme(plot.margin = margin(2, 3, 2, 2, "cm")) +
+  blue_theme()
+ 
+```
+
+# Exercice 5
+```{r modification des echelles des axes, warning=FALSE, message=FALSE}
+# Passage en échelle log10 pour les ordonnées
+ggplot(df_disc , aes(x = Year, fill = Langue_rec)) +
+  geom_histogram(position="fill", color="#e9ecef", binwidth = 1) +
+  scale_y_log10() + 
+  labs(x = "Années", y = "Disciplines (log)") +  
+  ggtitle("Distribution des langues de rédaction") +
+  labs(fill="Langues") +
+  theme(plot.margin = margin(1, 1, 1, 1, "cm")) +
+  blue_theme()
+```
+
+# Exercice 6
+```{r, fig.height=10, fig.width=12}
+# reprise du stacked barplot précédent : légende en haut
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") + 
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  theme(legend.position = "top") +
+  blue_theme()
+
+# reprise du stacked barplot précédent : légende à gauche
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") +
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  theme(legend.position = "left") + 
+  blue_theme() 
+
+# reprise du stacked barplot précédent : légende avec coordonnées
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") +
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  theme(legend.position = c(0.95,0.5)) + 
+  blue_theme() 
+  
+```
+
+
+# Exercice 7
+```{r variation couleur, fig.height=10, fig.width=12}
+# reprise du stacked barplot précédent : modification de la palette de couleur
+## Chargement de la palette 
+library(viridis)
+
+# Modification du plot : viridis de base
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") + 
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  blue_theme() + 
+  theme(legend.position = "top") + 
+  scale_fill_viridis(discrete = TRUE) # Appliquer la palette viridis à des données discrètes/catégorielles
+
+# Modification du plot : viridis inferno
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") + 
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  blue_theme() + 
+  theme(legend.position = "top") + 
+  scale_fill_viridis(discrete = TRUE, option="inferno") # Appliquer la palette viridis (inferno) à des données discrètes/catégorielles
+
+# Modification du plot : viridis plasma
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") + 
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  blue_theme() + 
+  theme(legend.position = "top") + 
+  scale_fill_viridis(discrete = TRUE, option="plasma") # Appliquer la palette viridis (inferno) à des données discrètes/catégorielles
+
+```
+
+
+# Exercice 8
+```{r ordre, fig.height=10, fig.width=12}
+# modification de l'ordre des disciplines
+df_disc.an2$Discipline_predi_F <- factor(df_disc.an2$Discipline_predi)
+myLevels <- levels(df_disc.an2$Discipline_predi_F)
+disc_inv <- factor(df_disc.an2$Discipline_predi_F, levels = rev(myLevels)) # inverser l'ordre des niveaux/catégories
+  
+
+# Plot : ordre des discipline inversé
+ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = disc_inv)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") + 
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  blue_theme() + 
+  theme(legend.position = "top") + 
+  scale_fill_viridis(discrete = TRUE) # Appliquer la palette viridis à des données discrètes/catégorielles
+
+```
+
+
+# Exercice 9
+```{r, fig.height=10, fig.width=12}
+df_disc.an2$Date <- as.Date(as.character(df_disc.an2$Year), format="%Y") # passer en format date
+
+# Construire le graphique statique
+p <- ggplot(df_disc.an2, aes(x = Date, y = Disc_predi.an, fill = disc_inv)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") + 
+  theme(plot.margin = margin(0.5, 2, 0.5, 0, "cm")) +
+  blue_theme() + 
+  theme(legend.position = "top") + 
+  scale_fill_viridis(discrete = TRUE) # Appliquer la palette viridis à des données discrètes/catégorielles
+
+
+# Création d'un graphique avec rangesliders 
+
+p_plotly <- ggplotly(p, dynamicTicks = TRUE) %>% # Transformer le graphique en graphique plotly
+  layout(
+    title = "Distribution des thèses par disciplines entre 1985 et 2018\n",
+    xaxis = list(
+      rangeslider = list(
+        type = "date",
+        bgcolor = "lightblue",           # Couleur de fond
+        bordercolor = "blue",            # Couleur de bordure
+        borderwidth = 2,                 # Épaisseur de la bordure
+        thickness = 0.1,                 # Épaisseur du slider
+        yaxis = list(title = "", fixedrange = TRUE)
+      )
+    )
+  )
+
+# Afficher le graphique
+p_plotly
+
+```
+
+
+```{r, fig.height=10, fig.width=12}
+# Catégories
+categories <- c("Biologie", "Droit et Science Politique", "Economie Gestion", "Informatique",
+                "Langues et Litteratures", "Materiaux, Milieux et Chimie", "Mathematiques",
+                "Mathematiques et Informatique", "Medecine", "Poubelle", "Psychologie",
+                "Science de l'ingenieur", "Science de la Terre", "Sciences de l'education", "SHS")
+
+# Organiser les catégories
+new_order <- c("Medecine", "Biologie", setdiff(categories, c("Medecine", "Biologie")))
+
+# 
+df_disc.an2$Discipline_predi <- factor(df_disc.an2$Discipline_predi, levels = new_order)
+df_disc.an2$Discipline_predi[df_disc.an2$Discipline_predi == "Poubelle"] <- NA
+
+df_disc.an2 <- df_disc.an2 %>%
+  drop_na(Discipline_predi)
+
+
+# Créer le graphique basic
+p2 <- ggplot(df_disc.an2, aes(x = Year, y = Disc_predi.an, fill = Discipline_predi)) +
+  geom_area(position = "stack", linewidth = 0.8, na.rm = TRUE) +
+  labs(x = "Date", y = "Number of Theses", fill = "Discipline",
+       title = "Evolution du nombre de thèses par disciplines",
+       subtitle = "Période 1985-2018") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+# Création d'un graphique avec rangesliders 
+
+p_plotly2 <- ggplotly(p2, dynamicTicks = TRUE) %>% # Transformer le graphique en graphique plotly
+  layout(
+    title = "Distribution des thèses par disciplines entre 1985 et 2018\n",
+    xaxis = list(
+      rangeslider = list(
+        type = "date",
+        bgcolor = "lightblue",           # Couleur de fond
+        bordercolor = "blue",            # Couleur de bordure
+        borderwidth = 2,                 # Épaisseur de la bordure
+        thickness = 0.1,                 # Épaisseur du slider
+        yaxis = list(title = "", fixedrange = TRUE)
+      )
+    )
+  )
+
+# Afficher le graphique
+p_plotly2
+
+```
+
+
+```{r, fig.height=10, fig.width=12}
+## Création d'un graphique plotly avec rangeselector
+p_plotly <- ggplotly(p, dynamicTicks = TRUE) %>%
+  layout(
+    title = "Distribution des langues de rédaction\n",
+    xaxis = list(
+      rangeselector = list(
+        buttons = list(
+          list(count = 5, label = "5 ans", step = "year", stepmode = "backward"),
+          list(count = 10, label = "10 ans", step = "year", stepmode = "backward"),
+          list(count = 15, label = "15 ans", step = "year", stepmode = "backward"),
+          list(step = "all")
+        ),
+         x = 0.3,  # Coordonnée x pour le rangeselector
+        y = -0.3   # Coordonnée y pour le rangeselector
+      )
+    )
+  )
+
+# Afficher le graphique
+p_plotly
+
+```
+
+```{r, fig.height=10, fig.width=12}
+df_disc.an2$Date <- as.Date(as.character(df_disc.an2$Year), format="%Y") 
+
+p <- ggplot(df_disc.an2, aes(x = Date, y = Disc_predi.an, fill = disc_inv)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Années", y = "Disciplines") +  
+  ggtitle("Distribution des thèses par disciplines entre 1985 et 2018") +
+  labs(fill="Disciplines") +
+  theme_minimal() +
+  theme(legend.position = "top") + 
+  scale_fill_viridis(discrete = TRUE) # Appliquer la palette viridis à des données discrètes/catégorielles
+
+# Transformation en plotly
+p_plotly <- ggplotly(p, dynamicTicks = TRUE)
+
+# Définir les étapes pour le slider 
+years <- sort(unique(df_disc.an2$Year))
+
+steps <- list()
+
+for(i in seq_along(years)) {
+  step <- list(
+    args = list("visible", sapply(years, function(y) y <= years[i])),
+    label = as.character(years[i]),
+    method = "restyle"
+  )
+  steps[[i]] = step
+}
+
+# Ajout du slider
+p_plotly2 <- p_plotly %>%
+  layout(
+    sliders = list(
+      list(
+        active = length(years) - 1,
+        yanchor = "top",
+        xanchor = "left",
+        currentvalue = list(prefix = "Year: "),
+        steps = steps
+      )
+    )
+  )
+
+p_plotly2
+
+```
+
+
+
+
+
+
