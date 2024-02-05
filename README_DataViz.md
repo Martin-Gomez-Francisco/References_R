@@ -1,4 +1,4 @@
-# data_Viz
+# Data_Viz
 ## Techniques de visualisation de données : exemples de scripts et codes (projets divers)
 
 ## Objectifs  
