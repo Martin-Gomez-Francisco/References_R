@@ -1,0 +1,1045 @@
+---
+title: "Introduction aux statistiques"
+autor: "Martin-Gomez F."
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r, message=FALSE, warning=FALSE}
+# Charger la bibliothèque pour la manipulation de données
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(viridis)
+library(xtable)
+library(lsr)
+library(vcd)
+library(gridExtra)
+library(car)
+library(rstatix)
+library(stargazer)
+```
+
+
+```{r theme personnalise}
+blue_theme <- function() {
+  theme(
+    # add border
+    panel.border = element_rect(colour = "blue", fill = NA, linetype = 2),
+    # color background
+    panel.background = element_rect(fill = "aliceblue"),
+    # modify grid
+    panel.grid.major.x = element_line(colour = "steelblue", linetype = 3, linewidth = 0.5),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y =  element_line(colour = "steelblue", linetype = 3, linewidth = 0.5),
+    panel.grid.minor.y = element_blank(),
+    # modify text, axis and colour
+    axis.text = element_text(colour = "steelblue", face = "italic"),
+    axis.title = element_text(colour = "steelblue"),
+    axis.ticks = element_line(colour = "steelblue"),
+    # text elements
+    plot.title = element_text(size = 16, face = 'bold', hjust = 0, vjust = 2, color="steelblue"),
+    plot.subtitle = element_text(size = 12),
+    plot.caption = element_text(size = 9, hjust = 1),
+    # legend at the bottom
+    legend.position = "bottom"
+  )
+}
+
+```
+
+
+# chargement des données
+```{r}
+# chargement des jeux de données depuis le sous-dossier "src"
+iter1a <- read.csv2("src/effec1.quest.compil.csv", header=TRUE, sep=",", dec=".", encoding = "latin1")
+iter1b <- read.csv2("src/usages.effec1.csv", header=TRUE, sep=",", dec=".", encoding = "latin1")
+
+iter3a <- read.csv2("src/effec3.quest.compil.csv", header=TRUE, sep=",", dec=".", encoding="latin1")
+iter3b <- read.csv2("src/usages.effec3.csv", header=TRUE, sep=",", dec=".", encoding="latin1")
+
+iter2a <- read.csv("src/effec2.quest.compil.csv", header=TRUE, sep=",", dec=".", encoding="latin1")
+iter2b <- read.csv("src/usages.effec2.csv", header=TRUE, sep=",", dec=".", encoding="latin1")
+
+```
+
+# Préparation du jeu de données global
+```{r}
+# Constrution des jeux de données par itération
+iter1 <- full_join(iter1a, iter1b, by = "Student_ID")
+iter2 <- full_join(iter2a, iter2b, by = "Student_ID")
+iter3 <- full_join(iter3a, iter3b, by = "Student_ID")
+
+# Ajouter une colonne pour l'itération
+iter1 <- iter1 %>%
+  mutate(iter1, iteration = 1)
+
+iter2 <- iter2 %>%
+  mutate(iter2, iteration = 2)
+
+iter3 <- iter3 %>%
+  mutate(iter3, iteration = 3)
+
+
+# construcrtion du dataset global
+dataG.raw <- rbind.fill(iter1, iter2, iter3)
+detach("package:plyr", unload = TRUE) # problème de conflits potentiels
+
+# sauvegarde du df de travail
+write.csv(dataG.raw, "dataG_MOOC.csv", row.names = FALSE)
+
+```
+
+
+```{r}
+# Décharge mémoire
+rm(iter1a, iter1b, iter2a, iter2b, iter3a, iter3b)
+```
+
+
+```{r}
+# Comptabiliser les vidéos visionénes et les quizz réalisés
+
+quizz_columns <- grep("^Quizz.[0-9]+.bin$", names(dataG.raw))  # identification des colonnes spécifiques pour les Quizz
+video_columns <- grep("^S[0-9]+\\.L[0-9]+(\\.[0-9]+)?$", names(dataG.raw)) # identification des colonnes spécifiques pour les Vidéos
+
+# Calculer le nombre de quizz effectués et de vidéos visionnées
+dataG.raw$nb_quizz <- rowSums(dataG.raw[, quizz_columns])
+dataG.raw$nb_videos <- rowSums(dataG.raw[, video_columns])
+
+```
+
+
+```{r}
+rm(quizz_columns, video_columns)
+```
+
+
+```{r}
+# renommer la variable Gender
+colnames(dataG.raw)[which(colnames(dataG.raw) == "Gender")] <- "Genre"
+
+# Utilisation de subsetting conditionnel
+dataG.raw$Genre[dataG.raw$Genre == "un homme"] <- "homme"
+dataG.raw$Genre[dataG.raw$Genre == "une femme"] <- "femme"
+
+```
+
+
+```{r}
+# Exploration des lignes dont les données sont NA (sauf ID et iteration)
+
+dataG_noID <- dataG.raw %>% select(-Student_ID, -iteration) # Retirer les colonnes Student_ID et iteration
+
+# Filtrer les lignes qui sont composées uniquement de NA
+only_NA_rows <- dataG_noID %>%
+  filter(rowSums(is.na(.)) == ncol(.))
+
+# Compter le nombre de ces lignes
+NA_count <- nrow(only_NA_rows)
+
+print(NA_count)
+
+```
+
+
+```{r}
+# Création d'un jeu de données intermédiaire sans les 100% NA
+dataG_filt <- dataG.raw %>%
+  filter(rowSums(is.na(select(., -Student_ID, -iteration))) != (ncol(.) - 2))
+
+```
+
+
+```{r}
+rm(dataG_noID, only_NA_rows, NA_count, iter1, iter2, iter3)
+```
+
+
+```{r}
+# compatbiliser les valeurs vides en NA pour la variable Country_HDI
+dataG_filt <- dataG_filt %>%
+  mutate(`Country_HDI` = ifelse(`Country_HDI` == "" | `Country_HDI` == "NA", NA, `Country_HDI`)) 
+
+# Compter les niveaux HDI
+HDI_count <- dataG_filt %>%
+  group_by(`Country_HDI`) %>%
+  tally(name = "Nombre")
+
+```
+
+
+```{r}
+# Nouvelle variable 
+
+dataG_filt <- dataG_filt %>%
+  mutate(`HDI` = case_when(
+    `Country_HDI` %in% c("M", "H") ~ "I",
+    TRUE ~ (`Country_HDI`)
+  ))
+
+```
+
+
+
+```{r}
+# Catégoriser les apprenants : choix méthodologique : les individus avec des valeurs NA = bystander
+dataG_filt <- dataG_filt  %>%
+  mutate(
+    Apprenant_type = case_when(
+      # Completer
+      Exam.bin == 1 ~ "Completer",
+      
+      # Disengaging Learners
+      (nb_quizz > 0 | Assignment.bin == 1) & (Exam.bin == 0 | is.na(Exam.bin)) ~ "Disengaging Learners",
+      
+      # Auditing Learner
+      (nb_quizz == 0 | is.na(nb_quizz)) & (Assignment.bin == 0 | is.na(Assignment.bin)) & nb_videos >= 6 ~ "Auditing Learner",
+      
+      # Bystander
+      (nb_quizz == 0 | is.na(nb_quizz)) & (Assignment.bin == 0 | is.na(Assignment.bin)) & (nb_videos < 6 | is.na(nb_videos)) ~ "Bystander",
+      
+      # Default case if none of the above
+      TRUE ~ "Other"
+    )
+  )
+
+
+```
+
+
+```{r}
+# inspection des other
+dataG_others <- dataG_filt %>%
+  filter(Apprenant_type == "Other") # Filtrer pour les "Other"
+
+# Compter le nombre de "Other"
+other_count <- dataG_others %>%
+  tally()
+
+print(paste("Nombre de ligne 100% vide-NA :", other_count))
+```
+
+
+```{r}
+rm(dataG_others, other_count)
+```
+
+
+```{r}
+# Compter le nombre de doublons
+nb_doublons <- sum(duplicated(dataG.raw))
+print(paste("Nombre de doublons :", nb_doublons))
+```
+
+
+```{r}
+# suppression des doublons
+dataG.raw <- dataG.raw %>% distinct()
+
+```
+
+
+
+```{r}
+# Sauvegarde jeu de données utilisable
+write.csv(dataG_filt, "dataG_clean.csv", row.names = FALSE)
+```
+
+
+```{r}
+# Création du dataset de travail statistiques
+dataG_S <- dataG_filt %>%
+  select(Student_ID, Genre, nb_quizz, nb_videos, Assignment.bin, Exam.bin, `HDI`, Apprenant_type, iteration)
+```
+
+# Rapide nettoyage
+```{r}
+# Exploration données
+str(dataG_S)
+
+# Modification du type de variable : transformer en facteurs
+dataG_S <- dataG_S %>% 
+  mutate_at(vars(HDI, Genre, Assignment.bin, Exam.bin, Apprenant_type, iteration), as.factor)
+
+```
+
+
+```{r}
+# Sauvegarde jeu de données utilisable
+write.csv(dataG_S, "dataG_Stats.csv", row.names = FALSE)
+```
+
+
+# Présentation des données
+```{r}
+# 1. DataFrame pour le type
+df_type <- dataG_S %>%
+  summarise_all(class) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "type")
+
+# 2. DataFrame pour le nombre de valeurs
+df_nb_vals <- dataG_S %>%
+  summarise_all(~sum(!is.na(.))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "nb_vals")
+
+# 3. DataFrame pour le pourcentage de données manquantes
+df_perc_missing <- dataG_S %>%
+  summarise_all(~mean(is.na(.)) * 100) %>%
+  mutate(across(everything(), round, digits = 2)) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "perc_missing")
+
+# 4. Fusion des dataframes
+summary_df <- df_type %>%
+  inner_join(df_nb_vals, by = "Variable") %>%
+  inner_join(df_perc_missing, by = "Variable")
+
+print(summary_df)
+
+
+```
+```{r, include=FALSE}
+# Création du code latex
+latex_code <- xtable(summary_df)
+print(latex_code, type = "latex", include.rownames = FALSE)
+
+# décharge de la mémoire
+rm(latex_code, df_type, df_nb_vals, df_perc_missing)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Calculer le total par iteration
+total_per_iteration <- dataG_S %>%
+  group_by(iteration) %>%
+  summarise(total = n())
+
+# Calculer le décompte par Apprenant_type et iteration
+count_app_type <- dataG_S %>%
+  group_by(iteration, Apprenant_type) %>%
+  count(name = "Nbr.Etudiants")
+
+# Joindre les deux dataframes et calculer le pourcentage
+perc.app.df <- left_join(count_app_type, total_per_iteration, by = "iteration") %>%
+  mutate(perc = round((Nbr.Etudiants / total) * 100,2)) %>%
+  select(iteration, Apprenant_type, Nbr.Etudiants, perc)
+
+print(perc.app.df)
+
+#graphique illustrant 
+p1 <- ggplot(perc.app.df, aes(x = as.factor(iteration), y = perc, fill = Apprenant_type)) + 
+  geom_bar(stat="identity", position="dodge") +
+  labs(x="Itération du MOOC",
+       y="Pourcentage (%)") +
+  labs(fill="Type d'apprenant") +
+  scale_fill_viridis(discrete = TRUE) +
+  blue_theme()
+
+print(p1)
+
+ggsave(filename = "categories_MOOC.png", plot = p1)
+
+# Transformation du format long au format large
+perc.app.df_wide <- perc.app.df %>%
+  pivot_wider(names_from = iteration, values_from = perc)
+
+# Créer un petit dataframe pour chaque itération
+df_iter1 <- perc.app.df %>% 
+  filter(iteration == 1) %>% 
+  select(-iteration)
+
+df_iter2 <- perc.app.df %>% 
+  filter(iteration == 2) %>% 
+  select(-iteration)
+
+df_iter3 <- perc.app.df %>% 
+  filter(iteration == 3) %>% 
+  select(-iteration)
+
+# Renommer les colonnes pour indiquer l'itération
+colnames(df_iter1)[colnames(df_iter1) == 'perc'] <- 'perc_iter1'
+colnames(df_iter2)[colnames(df_iter2) == 'perc'] <- 'perc_iter2'
+colnames(df_iter3)[colnames(df_iter3) == 'perc'] <- 'perc_iter3'
+
+# Joindre les trois petits dataframes en un seul
+final_df <- df_iter1 %>%
+  full_join(df_iter2, by = "Apprenant_type") %>%
+  full_join(df_iter3, by = "Apprenant_type")
+
+# Afficher le dataframe final
+print(final_df)
+
+
+
+
+```
+
+```{r, include = FALSE}
+# Création du code latex
+latex_code <- xtable(final_df)
+print(latex_code, type = "latex", include.rownames = FALSE)
+
+# décharge de la mémoire
+rm(latex_code, df_iter1, df_iter2, df_iter3)
+```
+
+
+# Chi2 et mozaic plot
+
+```{r}
+# Nettoyage des valeurs vides
+dataG_S[dataG_S == ""] <- NA
+dataG_S[dataG_S == " "] <- NA
+
+```
+
+
+```{r}
+# Créer une table de contingence
+contingency_table <- table(dataG_S$HDI, dataG_S$Genre)
+contingency_table <- contingency_table[, -1]
+print(contingency_table)
+
+# Convertir la table de contingence en dataframe
+contingency_df <- as.data.frame(as.table(contingency_table))
+
+# Renommer les colonnes pour plus de clarté
+colnames(contingency_df) <- c("HDI", "Genre", "Freq")
+
+# Afficher le dataframe
+print(contingency_df)
+
+```
+
+
+```{r, fig.height=10, fig.width=12}
+# Créer une table de contingence
+contingency_table.2 <- with(dataG_S, table(Genre, HDI))
+contingency_table.2 <- contingency_table.2[-1,]
+contingency_df <- na.omit(dataG_S[,c("HDI", "Genre")])
+
+# Vérifier si des cellules ont des fréquences trop basses
+print("Table de contingence :")
+print(contingency_table.2)
+
+# Effectuer un test du chi carré
+chi2_test <- chisq.test(contingency_table.2)
+
+# Afficher les résultats du test et les fréquences attendues
+print("Résultats du test du chi carré :")
+print(chi2_test)
+
+print("Fréquences attendues :")
+print(chi2_test$expected)
+
+
+residuals <- resid(chi2_test)
+print(residuals)
+residuals_df <- as.data.frame(residuals)
+print(residuals_df)
+colnames(residuals_df) <- c("Genre", "HDI", "Freq")
+
+
+
+
+# afficher le V de cramer
+V <- cramersV(contingency_table)
+cat(paste("V de Cramer: V =", round(V, 2)), "\n")
+
+
+# Créer un graphique en mosaïque pour les résidus du test du chi carré
+mosaicplot(contingency_table, main = NULL,
+           xlab = "Countries",
+           ylab = "Colors",
+           las = 1, 
+           border = "chocolate",
+           shade=TRUE,
+           ) 
+
+vcd::mosaic(contingency_table.2, legend = T, shade = T, color = T )
+
+# Pour le premier graphique
+png("mosaic_plot_1.png")
+
+# (re)Créer le premier graphique en mosaïque
+mosaic(contingency_table.2, 
+       shade=TRUE 
+       )
+
+# Fermer le dispositif graphique
+dev.off()
+
+# Définir le chemin et le nom du fichier pour le deuxième graphique
+png("mosaic_plot_2.png")
+
+# (Re)Créer le deuxième graphique en mosaïque
+mosaicplot(contingency_table.2, main = NULL,
+           xlab = "Genre",
+           ylab = "HDI",
+           las = 1, 
+           border = "chocolate",
+           shade=TRUE,
+           ) 
+
+# Fermer le dispositif graphique
+dev.off()
+
+
+
+```
+
+
+# Modèle linéaire, tests non paramétriques
+```{r}
+# Exploration et description des variables numériques
+summary(dataG_S[c("nb_quizz", "nb_videos")]) # Résume les statistiques pour ces colonnes
+
+# Pour chaque variable, vous pouvez également calculer des statistiques spécifiques:
+mean(dataG_S$nb_quizz, na.rm = TRUE)  # Moyenne, en supprimant les NA
+median(dataG_S$nb_quizz, na.rm = TRUE)  # Médiane, en supprimant les NA
+sd(dataG_S$nb_quizz, na.rm = TRUE)  # Écart-type, en supprimant les NA
+min(dataG_S$nb_quizz, na.rm = TRUE)  # Minimum, en supprimant les NA
+max(dataG_S$nb_quizz, na.rm = TRUE)  # Maximum, en supprimant les NA
+
+
+
+
+
+dataG_S %>%
+  summarise(
+    mean_quizz = mean(nb_quizz, na.rm = TRUE),
+    median_quizz = median(nb_quizz, na.rm = TRUE),
+    sd_quizz = sd(nb_quizz, na.rm = TRUE),
+    min_quizz = min(nb_quizz, na.rm = TRUE),
+    max_quizz = max(nb_quizz, na.rm = TRUE),
+    mean_videos = mean(nb_videos, na.rm = TRUE),
+    median_videos = median(nb_videos, na.rm = TRUE),
+    sd_videos = sd(nb_videos, na.rm = TRUE),
+    min_videos = min(nb_videos, na.rm = TRUE),
+    max_videos = max(nb_videos, na.rm = TRUE)
+  )
+
+# une analyse par genre
+
+dataG_S %>%
+  filter(!is.na(Genre)) %>%  # Retirer les lignes où Genre est NA
+  group_by(Genre) %>%
+  summarise(
+    mean_quizz = mean(nb_quizz, na.rm = TRUE),
+    median_quizz = median(nb_quizz, na.rm = TRUE),
+    sd_quizz = sd(nb_quizz, na.rm = TRUE),
+    min_quizz = min(nb_quizz, na.rm = TRUE),
+    max_quizz = max(nb_quizz, na.rm = TRUE),
+    mean_videos = mean(nb_videos, na.rm = TRUE),
+    median_videos = median(nb_videos, na.rm = TRUE),
+    sd_videos = sd(nb_videos, na.rm = TRUE),
+    min_videos = min(nb_videos, na.rm = TRUE),
+    max_videos = max(nb_videos, na.rm = TRUE)
+  )
+
+
+```
+
+```{r}
+
+# Calculer le nombre total d'observations pour chaque variable
+n_total <- nrow(dataG_S)
+
+
+
+############
+
+# Calculer les statistiques pour chaque variable
+result <- data.frame(
+  Statistique = c("Nb_NA", "Perc_NA", "Mean", "Ecart-type", "Median", "Min", "Max"),
+  Nb_quizz = c(
+    sum(is.na(dataG_S$nb_quizz)),
+    sum(is.na(dataG_S$nb_quizz)) / nrow(dataG_S) * 100,
+    mean(dataG_S$nb_quizz, na.rm = TRUE),
+    sd(dataG_S$nb_quizz, na.rm = TRUE),
+    median(dataG_S$nb_quizz, na.rm = TRUE),
+    min(dataG_S$nb_quizz, na.rm = TRUE),
+    max(dataG_S$nb_quizz, na.rm = TRUE)
+  ),
+  Nb_videos = c(
+    sum(is.na(dataG_S$nb_videos)),
+    sum(is.na(dataG_S$nb_videos)) / nrow(dataG_S) * 100,
+    mean(dataG_S$nb_videos, na.rm = TRUE),
+    sd(dataG_S$nb_videos, na.rm = TRUE),
+    median(dataG_S$nb_videos, na.rm = TRUE),
+    min(dataG_S$nb_videos, na.rm = TRUE),
+    max(dataG_S$nb_videos, na.rm = TRUE)
+  )
+)
+
+# Imprimer le résultat final
+print(result)
+
+
+#######
+# Calculer les statistiques pour chaque variable
+result <- data.frame(
+  Statistique = c("Nb_NA", "Perc_NA", "Moyenne(ET)", "Mediane", "Min.", "Max."),
+  Nb_quizz = c(
+    sum(is.na(dataG_S$nb_quizz)),
+    round(sum(is.na(dataG_S$nb_quizz)) / nrow(dataG_S) * 100,2),
+    sprintf("%.2f (%.2f)", mean(dataG_S$nb_quizz, na.rm = TRUE), sd(dataG_S$nb_quizz, na.rm = TRUE)),
+    median(dataG_S$nb_quizz, na.rm = TRUE),
+    min(dataG_S$nb_quizz, na.rm = TRUE),
+    max(dataG_S$nb_quizz, na.rm = TRUE)
+  ),
+  Nb_videos = c(
+    sum(is.na(dataG_S$nb_videos)),
+    round(sum(is.na(dataG_S$nb_videos)) / nrow(dataG_S) * 100,2),
+    sprintf("%.2f (%.2f)", mean(dataG_S$nb_videos, na.rm = TRUE), sd(dataG_S$nb_videos, na.rm = TRUE)),
+    median(dataG_S$nb_videos, na.rm = TRUE),
+    min(dataG_S$nb_videos, na.rm = TRUE),
+    max(dataG_S$nb_videos, na.rm = TRUE)
+  )
+)
+
+# Convertir toutes les valeurs numériques à des caractères pour un affichage uniforme dans le data.frame
+result <- result %>% mutate(across(where(is.numeric), as.character))
+
+# Imprimer le résultat final
+print(result)
+
+```
+```{r}
+# Création du code latex
+latex_code <- xtable(result)
+print(latex_code, type = "latex", include.rownames = FALSE)
+```
+
+
+```{r}
+library(kableExtra)
+
+summary_stats <- dataG_S %>%
+  filter(!is.na(Genre)) %>%  # Retirer les lignes où Genre est NA
+  group_by(Genre) %>%
+  summarise(
+    mean_quizz = mean(nb_quizz, na.rm = TRUE),
+    median_quizz = median(nb_quizz, na.rm = TRUE),
+    sd_quizz = sd(nb_quizz, na.rm = TRUE),
+    min_quizz = min(nb_quizz, na.rm = TRUE),
+    max_quizz = max(nb_quizz, na.rm = TRUE),
+    mean_videos = mean(nb_videos, na.rm = TRUE),
+    median_videos = median(nb_videos, na.rm = TRUE),
+    sd_videos = sd(nb_videos, na.rm = TRUE),
+    min_videos = min(nb_videos, na.rm = TRUE),
+    max_videos = max(nb_videos, na.rm = TRUE)
+  ) %>%
+  mutate(
+    mean_quizz = round(mean_quizz, 2),
+    sd_quizz = round(sd_quizz, 2),
+    mean_videos = round(mean_videos, 2),
+    sd_videos = round(sd_videos, 2)
+  )
+
+summary_stats_tidy <- summary_stats %>%
+  pivot_longer(cols = -Genre, 
+               names_to = "Variable", 
+               values_to = "Value") %>%
+  separate(Variable, into = c("Measure", "Metric"), sep = "_") %>%
+  pivot_wider(names_from = Genre, values_from = Value)
+
+
+summary_stats_tidy %>%
+  kable("latex") %>%
+  kable_styling()
+print(summary_stats_tidy)
+
+```
+
+## T test et test U
+```{r}
+t_result <- t.test(nb_videos ~ Genre, data = dataG_S, na.rm = TRUE)
+print(t_result)
+
+```
+
+```{r}
+# Réaliser le test U de Mann-Whitney
+wilcox_result <- wilcox.test(nb_videos ~ Genre, data = dataG_S, na.rm=TRUE)
+print(wilcox_result)
+
+```
+
+
+## Corrélations
+```{r}
+# Réaliser le test de corrélation de Pearson
+pearson_result <- cor.test(dataG_S$nb_quizz, dataG_S$nb_videos, method = "pearson", na.rm=TRUE)
+print(pearson_result)
+
+
+# Réaliser le test de corrélation de Spearman
+spearman_result <- cor.test(dataG_S$nb_quizz, dataG_S$nb_videos, method = "spearman", na.rm=TRUE)
+print(spearman_result)
+
+```
+```{r, message=FALSE}
+# Créer le scatterplot avec une ligne de régression linéaire
+p4 <- ggplot(dataG_S, aes(x = nb_videos, y = nb_quizz)) +
+  geom_point() +  # Créer les points
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +  # Ajouter la ligne de régression linéaire
+  xlab("Nombre de quizz complétés") +
+  ylab("Nombre de vidéos vues") + 
+  blue_theme()
+
+print(p4)
+
+ggsave(filename = "scatter_quizzVideo.png", plot = p4)
+
+```
+
+
+```{r}
+# Ajuster le modèle de régression linéaire
+lm_quizzVideo <- lm(nb_videos ~ nb_quizz, data = dataG_S)
+anova(lm_quizzVideo)
+
+# Afficher le résumé du modèle
+summary_result <- summary(lm_quizzVideo)
+print(summary_result)
+
+print(anova(lm_quizzVideo))
+
+```
+
+
+## Les résultats indiquent 
+```{r, warning=FALSE, message=FALSE}
+# pour correspondre à l'énoncé
+dataG_S$Genre <- relevel(dataG_S$Genre, ref = "homme")
+
+# Ajustement du modèle linéaire
+mod1 <- lm(nb_videos ~ HDI + Genre, data = dataG_S)
+
+# Résumé du modèle
+summary_stats <- summary(mod1)
+print(summary_stats)
+
+# Table ANOVA
+anova_stats <- anova(mod1)
+print(anova_stats)
+res.aov <- dataG_S %>% anova_test(nb_videos ~ HDI + Genre, type = 1) # pour les effets de taille
+res.aov
+
+cat("Interprétation des degrés de liberté (ddl) :
+    Pour Genre: on a 1 degré de liberté car la variable Genre a deux niveaux (homme et femme) et df= n−1 = (2−1) = 1 df.
+    Pour HDI: HDI est une variable catégorielle avec 3 niveaux (B, I, TH), alors df = n−1 = (3−1) = 2 df ")
+    
+```
+
+```{r, include=FALSE}
+library(stargazer)
+
+# Pour le summary
+print(xtable(summary_stats))
+
+# Pour l'anova
+print(xtable(anova_stats))
+
+
+
+# Pour le summary et l'anova en même temps
+stargazer(mod1, type = "text", report = "vc*pt", title = "Résultats ANOVA", single.row = TRUE)
+
+
+```
+
+```{r, message=FALSE}
+
+# Filtrer les données pour enlever les NA
+data_filtered <- dataG_S %>% filter(!is.na(nb_videos) & !is.na(Genre) & !is.na(HDI))
+
+# Calcul des statistiques de résumé
+data_summary <- data_filtered %>%
+  group_by(Genre, HDI) %>%
+  summarise(
+    mean_videos = mean(nb_videos, na.rm = TRUE),
+    count = n(),
+    se = sd(nb_videos, na.rm = TRUE) / sqrt(count)  # calcul de l'erreur standard
+  )
+
+# Création du barplot
+p2 <- ggplot(data_summary, aes(x = Genre, y = mean_videos, fill = HDI)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_errorbar(aes(ymin = mean_videos - se, ymax = mean_videos + se), 
+                width = 0.15,                    # largeur des barres
+                position = position_dodge(0.9)) +  # ajustement de la position
+  xlab("Genre") +
+  ylab("Nombre moyen de vidéos visionnées") +
+  scale_fill_viridis(discrete = TRUE) + # Pour une meilleure palette de couleurs
+  blue_theme()  
+p2
+
+ggsave(filename="Distrib_videos.png", plot = p2)
+```
+
+
+
+```{r}
+
+mod1_interact <- lm(nb_videos ~ HDI + Genre + HDI*Genre, data = dataG_S)
+summary_stats_interact <- summary(mod1_interact)
+anova_stats_interact <- anova(mod1_interact)
+
+print(summary_stats_interact)
+print(anova_stats_interact)
+
+
+```
+
+```{r, include=FALSE}
+# Pour le summary
+print(xtable(summary_stats_interact))
+
+# Pour l'anova
+print(xtable(anova_stats_interact))
+
+# Pour le summary et l'anova en même temps
+stargazer(mod1_interact, type = "text", report = "vc*pt", title = "Résultats ANOVA avec Interaction", single.row = TRUE)
+
+```
+
+
+
+
+# Regression logistique
+## Présenter des odds-ratio
+```{r}
+library(forestmodel)
+
+# Modèle de régression logistique pour prédire Exam.bin 
+logistic_model <- glm(Exam.bin ~ Genre + HDI, data = dataG_S, family = binomial)
+summary(logistic_model)
+#table(data_filtered)
+
+coefficients(summary(logistic_model))
+forest_model(logistic_model)
+
+png("mon_forestPlot.png")
+forest_model(logistic_model)
+dev.off()
+
+
+```
+
+
+```{r}
+# table des odds ratio
+odds_ratios <- exp(cbind(OR = coef(logistic_model), confint(logistic_model)))
+odds_ratios <- round(odds_ratios, 2)
+odds_ratios2 <- odds_ratios[-1, ]
+print(odds_ratios2)
+```
+
+```{r}
+library(finalfit)
+ 
+dependent = "Exam.bin"
+explanatory = c("Genre","HDI")
+ 
+ 
+res_glm_multi <- dataG_S %>%
+    glmmulti(dependent, explanatory) %>% 
+    fit2df(estimate_suffix="(multivarié)")
+res_glm_multi
+ 
+knitr::kable(res_glm_multi,row.names=FALSE, align=c("l", "l", "r", "r", "r", "r"))
+    
+
+data_filtered %>%
+  or_plot(dependent, explanatory,table_text_size = 4,
+  title_text_size = 16) 
+```
+
+
+```{r}
+
+res_glm_multi2 <- data_filtered %>%
+    finalfit(dependent, explanatory)
+
+res_glm_multi2
+
+```
+
+
+
+```{r}
+# Création du forest plot avec ggplot2
+
+
+# Créer un dataframe pour le forest plot
+forest_data <- data.frame(
+  Term = rownames(odds_ratios2),
+  OR = odds_ratios2[, "OR"],
+  Lower = odds_ratios2[, "2.5 %"],
+  Upper = odds_ratios2[, "97.5 %"]
+)
+
+p3 <- ggplot(forest_data, aes(y = Term, x = OR, xmin = Lower, xmax = Upper)) +
+  geom_segment(aes(x = Lower, xend = Upper, yend = Term), color = "blue") +
+  geom_point(size = 3, color = "blue") +
+  geom_errorbarh(aes(height = 0.2), color = "blue") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
+  labs(title = "Forest Plot", y = "Term", x = "Odds Ratio") +
+  theme_minimal() +
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor.y = element_blank()) +
+  annotate("point", x = 1, y = "Homme", size = 3, color = "blue") +
+  annotate("point", x = 1, y = "Bas", size = 3, color = "blue")
+
+# Affichage du forest plot
+print(p3)
+
+
+```
+
+# Données de comptage et loi de poisson
+```{r, message=FALSE}
+# Calculer des statistiques descriptives pour la loi normale et de Poisson
+mean_videos <- mean(dataG_S$nb_videos, na.rm = TRUE)
+sd_videos <- sd(dataG_S$nb_videos, na.rm = TRUE)
+lambda_poisson <- mean_videos
+
+# Créer l'histogramme
+ggplot(dataG_S, aes(x = nb_videos)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "blue", color = "black", alpha = 0.5) + 
+  blue_theme()
+
+# Créer l'histogramme
+p6 <- ggplot(dataG_S, aes(x = nb_videos)) +
+  geom_histogram(bins = 30, fill = "blue", color="black", alpha = 0.5) +
+  blue_theme()+
+  # Ajouter des légendes et des titres
+  labs(
+    x = "Nombre de vidéos",
+    y = "Effectifs"
+  ) +
+  scale_colour_manual(
+    "Légende",
+    values = c("blue", "red", "green"),
+    labels = c("Données", "Normal", "Poisson")
+  )
+p6
+
+ggsave(filename = "distrib_nbVideos.png", plot = p6)
+
+```
+
+
+
+```{r fig.width=10, fig.height=7, message = FALSE}
+# Ajuster le modèle de régression linéaire
+my_model <- lm(nb_videos ~ HDI + Genre + HDI*Genre, data = dataG_S)
+
+# Définir la grille pour les graphiques
+par(mfrow = c(2, 2))
+
+# Créer chaque graphique
+plot(my_model, which = 1, main = "A")
+plot(my_model, which = 2, main = "B")
+plot(my_model, which = 3, main = "C")
+plot(my_model, which = 5, main = "D")
+
+
+# Réinitialiser la grille à ses valeurs par défaut
+par(mfrow = c(1, 1))
+
+# Commencer l'enregistrement des graphiques dans un fichier PNG
+png("combined_plots.png", width = 1200, height = 900)
+
+# Définir la grille pour les graphiques
+par(mfrow = c(2, 2))
+
+# Créer chaque graphique
+plot(my_model, which = 1, main = "A")
+plot(my_model, which = 2, main = "B")
+plot(my_model, which = 3, main = "C")
+plot(my_model, which = 5, main = "D")
+
+# Terminer l'enregistrement des graphiques dans le fichier
+dev.off()
+
+# Réinitialiser la grille à ses valeurs par défaut
+par(mfrow = c(1, 1))
+
+```
+
+
+```{r, fig.width=8}
+# Charger le package nécessaires
+library(ggfortify)
+
+# Ajuster le modèle de régression linéaire
+my_model <- lm(nb_videos ~ HDI + Genre + HDI*Genre, data = dataG_S)
+
+# Créer des graphiques de diagnostic avec ggfortify
+p8 <- autoplot(my_model, which = c(1:3,5), nrow = 2, ncol = 2, label.size = 2) + 
+  blue_theme()
+
+print(p8)
+
+
+```
+
+```{r, fig.width=8, message=FALSE}
+###### Essai de script avec export fonctionnel (conflit avec ggsave)
+# Ajuster le modèle de régression linéaire
+my_model <- lm(nb_videos ~ HDI + Genre + HDI*Genre, data = dataG_S)
+
+# Créer des graphiques de diagnostic avec ggfortify
+p7 <- autoplot(my_model, which = c(1, 2, 3, 5), nrow = 2, ncol = 2, label.size = 2) +
+  blue_theme()
+
+# Ouvrir un nouveau périphérique graphique PNG
+png("combined_plots_ggfortify2.png", height = 474, width = 768)
+
+# Afficher le graphique sur ce périphérique
+print(p7)
+
+# Fermer le périphérique graphique, sauvegardant ainsi le fichier PNG
+dev.off()
+
+```
+
+
+```{r, fig.width=8}
+# Ajuster le modèle de Poisson
+poisson_model <- glm(nb_videos ~ Genre + HDI + HDI*Genre, data = dataG_S, family=poisson)
+
+# Récupérer les valeurs ajustées et les résidus
+fitted.values <- fitted(poisson_model)
+residuals <- residuals(poisson_model, type = "pearson")
+std_residuals <- residuals(poisson_model, type = "deviance")
+leverage <- hatvalues(poisson_model)
+
+# Résumé du modèle
+summary_stats.P <- summary(poisson_model)
+print(summary_stats.P)
+
+# Table ANOVA
+anova_stats.P <- anova(poisson_model)
+print(anova_stats.P)
+
+```
+
+```{r, include=FALSE}
+# Pour le summary
+print(xtable(summary_stats.P))
+
+# Pour l'anova
+print(xtable(anova_stats.P))
+
+# Pour le summary et l'anova en même temps
+stargazer(poisson_model, type = "text", report = "vc*pt", title = "Résultats ANOVA avec Interaction", single.row = TRUE)
+
+```
+
+
+
+
